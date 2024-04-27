@@ -10,7 +10,7 @@ Test pod to use secrets stored in Vault by using Vault Secrets Operator
 
 ## Dev mode disabled
 - Deploy Vault to kubernetes cluster 
-- Exec into vault-0 pod and run `vault operator init`
+- Exec into vault-0 pod with `kubectl exec -it -n vault vault-0 -- /bin/bash` and run `vault operator init`
 - Copy 5 keys and root token
 - Unseal Vault by running `vault operator unseal` and paste in 3 of the 5 keys
 - Pod should be in ready state now
@@ -20,6 +20,10 @@ Test pod to use secrets stored in Vault by using Vault Secrets Operator
 - Deploy Vault Secrets Operator to cluster
 - Deploy test pod
 - Confirm pod has access to secret
+- Backup vault `vault operator raft snapshot save /home/vault/backup.snap`
+- Copy Backup off of pod `kubectl cp vault/vault-0:/home/vault/backup.snap ../backup.snap`
+- Copy Backup into new Vault Pod `kubectl cp ../backup.snap vault/vault-0:/home/vault/backup.snap`
+- Restore from backup - `vault operator raft snapshot restore -force /home/vault/backup.snap`
 
 
 # MISC
