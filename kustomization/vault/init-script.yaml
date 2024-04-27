@@ -5,24 +5,32 @@ apiVersion: v1
 data:
   init.sh: |-
     #!/bin/sh
-    ## Use following container vault:1.4.0
-    ## Make sure folder name is not ending with /
     set -e
 
-    sleep 15
+    # Only for dev mode to allow vault to be initialized
+    # sleep 15
 
+    # Enable kv-v2 engine
     vault secrets enable kv-v2
 
+    # Enable k8s auth backend so VSO can authenticate with backend vault using k8s service accounts
     vault auth enable kubernetes
 
-    vault write auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+    # Configure auth engine to talk to k8s api server
+    vault write auth/kubernetes/config \
+      kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443" \
+      token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+      kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+      issuer="https://kubernetes.default.svc.cluster.local"
 
+    # Add policy to allow reading all secrets in kv-v2 
     vault policy write default-kv-v2-access - << EOF
         path "kv-v2/*" {
         capabilities = ["read"]
         }
     EOF
 
+    # Create role to enable access to the secret. Grants access to all K8s SAs
     vault write auth/kubernetes/role/default-kv-v2-access \
       bound_service_account_names="*" \
       bound_service_account_namespaces="*" \
