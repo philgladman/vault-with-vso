@@ -1,0 +1,33 @@
+kind: ConfigMap
+metadata:
+  name: vault-init-script-cm
+apiVersion: v1
+data:
+  init.sh: |-
+    #!/bin/sh
+    ## Use following container vault:1.4.0
+    ## Make sure folder name is not ending with /
+    set -e
+
+    sleep 15
+
+    vault secrets enable kv-v2
+
+    vault auth enable kubernetes
+
+    vault write auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+
+    vault policy write default-kv-v2-access - << EOF
+        path "kv-v2/*" {
+        capabilities = ["read"]
+        }
+    EOF
+
+    vault write auth/kubernetes/role/default-kv-v2-access \
+      bound_service_account_names="*" \
+      bound_service_account_namespaces="*" \
+      token_policies=default-kv-v2-access \
+      audience=vault \
+      ttl=24h
+    
+    exit 0

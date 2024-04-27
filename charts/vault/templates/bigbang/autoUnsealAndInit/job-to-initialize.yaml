@@ -1,0 +1,156 @@
+{{- if and .Values.autoInit.enabled .Release.IsInstall }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ template "vault.fullname" . }}-root-token-secret
+  labels:
+    app.kubernetes.io/name: {{ include "vault.name" . }}-root-token-secret
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+- apiGroups:
+  - ""
+  - "authentication.k8s.io"
+  resources:
+  - serviceaccounts/token
+  - secrets
+  - tokenreviews
+  verbs:
+  - create
+  - get
+  - watch
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ template "vault.fullname" . }}-root-token-secret
+  labels:
+    app.kubernetes.io/name: {{ include "vault.name" . }}-root-token-secret
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ template "vault.fullname" . }}-root-token-secret
+subjects:
+- kind: ServiceAccount
+  name: {{ template "vault.fullname" . }}-root-token-secret
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ template "vault.fullname" . }}-root-token-secret
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "vault.name" . }}-root-token-secret
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ template "vault.fullname" . }}-job-init
+  namespace: {{ .Release.Namespace }}
+spec:
+  template:
+    metadata:
+      name: {{ template "vault.fullname" . }}-job-init
+      annotations:
+        proxy.istio.io/config: |
+          proxyMetadata:
+            ISTIO_META_DNS_CAPTURE: "true"
+            ISTIO_META_DNS_AUTO_ALLOCATE: "true"
+      labels:
+        app.kubernetes.io/name:  {{ include "vault.name" . }}
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    spec:
+      {{- include "imagePullSecrets" . | nindent 6 }}
+      {{- if not .Values.global.openshift }}
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: {{ .Values.server.gid | default 1000 }}
+        runAsUser: {{ .Values.server.uid | default 100 }}
+        fsGroup: {{ .Values.server.gid | default 1000 }}
+      {{- end }}
+      containers:
+      - name: vault-init-job
+        image:  {{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}
+        command: ['/bin/sh', '-c', 'cd /vault/data/init && sh init.sh' ]
+        volumeMounts:
+        - name: vault-keys
+          mountPath: "/vault/data"
+        - name: vault-data
+          mountPath: "/vault/data/init"
+        - name: vault-tmp
+          mountPath: "/export"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 100m
+            memory: 256Mi
+        securityContext:
+          capabilities:
+            drop:
+            - ALL
+      - name: bigbang-base-secret-creation
+        image:  {{ .Values.autoInit.image.repository }}:{{ .Values.autoInit.image.tag }}
+        command:
+          - /bin/bash
+          - -c
+          - |
+            until [ -f /export/finished ]; do
+              echo "---=== Waiting for vault-init-job to finish ===---";
+              sleep 5;
+            done
+
+            echo "---=== Writing secret ===---"
+
+            until kubectl create secret generic vault-token --from-file=key=/export/key --from-file=init.out=/export/init.out >& /dev/null; 
+            do
+              echo "Retry writing secret"
+              sleep 5;
+            done
+
+            {{- if .Values.istio.enabled }}
+              echo "Killing Istio Sidecar"
+              curl -fsI -X POST http://localhost:15020/quitquitquit
+            {{- end}}
+            exit 0
+        securityContext:
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: vault-keys
+          mountPath: "/vault/data"
+        - name: vault-data
+          mountPath: "/vault/data/init"
+        - name: vault-tmp
+          mountPath: "/export"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 100m
+            memory: 256Mi      
+      restartPolicy: OnFailure
+      serviceAccount: {{ template "vault.fullname" . }}-root-token-secret
+      volumes:
+      - name: vault-keys
+        persistentVolumeClaim:
+          claimName: {{ template "vault.fullname" . }}-token-claim
+      - name: vault-data
+        configMap:
+          name: vault-init-cm
+      - name: vault-tmp
+        emptyDir: {}
+  backoffLimit: 10
+  activeDeadlineSeconds: 360
+  {{- end }}

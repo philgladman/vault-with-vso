@@ -1,0 +1,39 @@
+injector:
+  enabled: false
+istio:
+  enabled: false
+autoInit:
+  enabled: false
+server:
+  # extraArgs: "; sh /vault/data/init/init.sh"
+  postStart:
+    - /bin/sh
+    - -c
+    - sh /vault/data/init/init.sh;
+  volumes: 
+    - name: init-script
+      configMap:
+        name: vault-init-script-cm
+  volumeMounts:
+    - name: init-script
+      mountPath: "/vault/data/init"
+  dev:
+    enabled: true
+  dataStorage:
+    enabled: true
+  auditStorage:
+    enabled: false
+  statefulSet:
+    securityContext:
+      pod:
+        runAsNonRoot: true
+        runAsGroup: 1001
+        runAsUser: 1001
+        fsGroup: 1001
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 1
+    limits:
+      memory: 2Gi
+      cpu: 2
